@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"slices"
 	"strings"
 )
 
@@ -59,7 +58,7 @@ func (r *Request) handleStringRequest() {
 }
 
 func (r *Request) handleArrayRequest() {
-	parts := slices.Collect(slices.Chunk(r.Fields[1:], 2))
+	parts := Chunk(r.Fields[1:], 2)
 	command := parts[0][1]
 	switch strings.ToUpper(command) {
 	case "PING":
