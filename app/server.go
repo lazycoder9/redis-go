@@ -78,7 +78,6 @@ func makeRequest(conn net.Conn, rawData []byte) Request {
 }
 
 func handleRequest(r Request) {
-	fmt.Println(r.Fields)
 	switch r.Type {
 	case "string":
 		r.handleStringRequest()
