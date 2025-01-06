@@ -7,6 +7,26 @@ import (
 	"strings"
 )
 
+var storage map[string]interface{}
+
+var commands map[string]func(r *Request) = map[string]func(r *Request){
+	"ECHO": handleEchoCommand,
+	"PING": handlePingCommand,
+}
+
+func handleEchoCommand(r *Request) {
+	parts := Chunk(r.Fields[1:], 2)
+	r.Conn.Write([]byte(strings.Join(parts[1], "\r\n") + "\r\n"))
+}
+
+func handleUnknownError(r *Request) {
+	r.Conn.Write([]byte("-ERR unknown command\r\n"))
+}
+
+func handlePingCommand(r *Request) {
+	r.Conn.Write([]byte("+PONG\r\n"))
+}
+
 type Response struct {
 	Type string
 	Data []byte
@@ -59,14 +79,12 @@ func (r *Request) handleStringRequest() {
 
 func (r *Request) handleArrayRequest() {
 	parts := Chunk(r.Fields[1:], 2)
-	command := parts[0][1]
-	switch strings.ToUpper(command) {
-	case "PING":
-		r.Conn.Write([]byte("+PONG\r\n"))
-	case "ECHO":
-		r.Conn.Write([]byte(strings.Join(parts[1], "\r\n") + "\r\n"))
-	default:
-		r.Conn.Write([]byte("-ERR unknown command\r\n"))
+	command := strings.ToUpper(parts[0][1])
+
+	if handler, ok := commands[command]; ok {
+		handler(r)
+	} else {
+		handleUnknownError(r)
 	}
 }
 
