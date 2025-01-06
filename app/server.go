@@ -7,11 +7,13 @@ import (
 	"strings"
 )
 
-var storage map[string]interface{}
+var storage = make(map[string]interface{})
 
 var commands map[string]func(r *Request) = map[string]func(r *Request){
 	"ECHO": handleEchoCommand,
 	"PING": handlePingCommand,
+	"SET":  handleSetCommand,
+	"GET":  handleGetCommand,
 }
 
 func handleEchoCommand(r *Request) {
@@ -25,6 +27,25 @@ func handleUnknownError(r *Request) {
 
 func handlePingCommand(r *Request) {
 	r.Conn.Write([]byte("+PONG\r\n"))
+}
+
+func handleSetCommand(r *Request) {
+	parts := Chunk(r.Fields[1:], 2)
+	key := parts[1][1]
+	value := parts[2]
+	storage[key] = value
+	r.Conn.Write([]byte("+OK\r\n"))
+}
+
+func handleGetCommand(r *Request) {
+	parts := Chunk(r.Fields[1:], 2)
+	key := parts[1][1]
+	if value, ok := storage[key]; ok {
+		v := value.([]string)
+		r.Conn.Write([]byte(strings.Join(v, "\r\n") + "\r\n"))
+	} else {
+		r.Conn.Write([]byte("-ERR no such key\r\n"))
+	}
 }
 
 type Response struct {
