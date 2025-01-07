@@ -63,13 +63,13 @@ func handleGetCommand(r *Request) {
 	record, recordExist := storage[key]
 
 	if !recordExist {
-		r.Conn.Write([]byte("%-1\r\n"))
+		r.Conn.Write([]byte("$-1\r\n"))
 		return
 	}
 
 	if !record.expiration.IsZero() && time.Now().After(record.expiration) {
 		delete(storage, key)
-		r.Conn.Write([]byte("%-1\r\n"))
+		r.Conn.Write([]byte("$-1\r\n"))
 		return
 	}
 
