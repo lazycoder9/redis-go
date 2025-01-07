@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
-var storage = make(map[string]interface{})
+var storage = make(map[string]Record)
 
 var commands map[string]func(r *Request) = map[string]func(r *Request){
 	"ECHO": handleEchoCommand,
@@ -33,19 +35,51 @@ func handleSetCommand(r *Request) {
 	parts := Chunk(r.Fields[1:], 2)
 	key := parts[1][1]
 	value := parts[2]
-	storage[key] = value
+	options := parts[3:]
+	record := Record{value: value}
+
+	for i := 0; i < len(options); i += 2 {
+		optionName := strings.ToUpper(options[i][1])
+		optionValue := options[i+1][1]
+
+		if optionName == "PX" {
+			ms, err := strconv.ParseInt(optionValue, 10, 64)
+			if err != nil {
+				r.Conn.Write([]byte("-ERR cannot parse PX value"))
+			}
+
+			duration := time.Duration(ms) * time.Millisecond
+			record.expiration = time.Now().Add(duration)
+		}
+
+	}
+	storage[key] = record
 	r.Conn.Write([]byte("+OK\r\n"))
 }
 
 func handleGetCommand(r *Request) {
 	parts := Chunk(r.Fields[1:], 2)
 	key := parts[1][1]
-	if value, ok := storage[key]; ok {
-		v := value.([]string)
-		r.Conn.Write([]byte(strings.Join(v, "\r\n") + "\r\n"))
-	} else {
-		r.Conn.Write([]byte("-ERR no such key\r\n"))
+	record, recordExist := storage[key]
+
+	if !recordExist {
+		r.Conn.Write([]byte("%-1\r\n"))
+		return
 	}
+
+	if !record.expiration.IsZero() && time.Now().After(record.expiration) {
+		delete(storage, key)
+		r.Conn.Write([]byte("%-1\r\n"))
+		return
+	}
+
+	v := record.value.([]string)
+	r.Conn.Write([]byte(strings.Join(v, "\r\n") + "\r\n"))
+}
+
+type Record struct {
+	value      interface{}
+	expiration time.Time
 }
 
 type Response struct {
