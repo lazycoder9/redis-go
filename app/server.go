@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"net"
 	"os"
@@ -9,13 +10,18 @@ import (
 	"time"
 )
 
-var storage = make(map[string]Record)
+var (
+	storage          = make(map[string]Record)
+	configDBFileName string
+	configDir        string
+)
 
 var commands map[string]func(r *Request) = map[string]func(r *Request){
-	"ECHO": handleEchoCommand,
-	"PING": handlePingCommand,
-	"SET":  handleSetCommand,
-	"GET":  handleGetCommand,
+	"ECHO":   handleEchoCommand,
+	"PING":   handlePingCommand,
+	"SET":    handleSetCommand,
+	"GET":    handleGetCommand,
+	"CONFIG": handleConfigCommand,
 }
 
 func handleEchoCommand(r *Request) {
@@ -29,6 +35,24 @@ func handleUnknownError(r *Request) {
 
 func handlePingCommand(r *Request) {
 	r.Conn.Write([]byte("+PONG\r\n"))
+}
+
+func handleConfigCommand(r *Request) {
+	parts := Chunk(r.Fields[1:], 2)
+
+	if strings.ToUpper(parts[1][1]) != "GET" {
+		r.Conn.Write([]byte("-ERR unknown command\r\n"))
+		return
+	}
+
+	switch strings.ToLower(parts[2][1]) {
+	case "dir":
+		r.Conn.Write([]byte(fmt.Sprintf("*2\r\n$3\r\ndir\r\n$%d\r\n%s\r\n", len(configDir), configDir)))
+	case "dbfilename":
+		r.Conn.Write([]byte(fmt.Sprintf("*2\r\n$10\r\ndbfilename\r\n$%d\r\n%s\r\n", len(configDBFileName), configDBFileName)))
+	default:
+		r.Conn.Write([]byte("-ERR unknown command\r\n"))
+	}
 }
 
 func handleSetCommand(r *Request) {
@@ -186,6 +210,10 @@ func main() {
 	}
 
 	defer listener.Close()
+
+	flag.StringVar(&configDir, "dir", "./", "dir config")
+	flag.StringVar(&configDBFileName, "dbfilename", "dump.rdb", "dbFileName config")
+	flag.Parse()
 
 	for {
 		conn, err := listener.Accept()
