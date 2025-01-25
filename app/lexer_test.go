@@ -28,7 +28,10 @@ func TestLexer(t *testing.T) {
 
 	for _, tt := range tests {
 		lexer := NewLexer(tt.input)
-		tokens := lexer.Tokenize()
+		tokens, err := lexer.Tokenize()
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
 
 		if len(tokens) != len(tt.expected) {
 			t.Errorf("wrong number of tokens, got=%d, want=%d",
