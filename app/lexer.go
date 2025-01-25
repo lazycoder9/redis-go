@@ -94,6 +94,12 @@ func (l *Lexer) Tokenize() ([]Token, error) {
 			l.CreateToken(TokenArray)
 		case '$':
 			l.CreateToken(TokenBulkString)
+		case '+':
+			l.CreateToken(TokenSimpleStr)
+		case '-':
+			l.CreateToken(TokenError)
+		case ':':
+			l.CreateToken(TokenInteger)
 		case '\r':
 			l.PushCurrentToken()
 
