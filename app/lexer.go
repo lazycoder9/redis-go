@@ -13,6 +13,10 @@ const (
 	TokenInteger    = ":"
 	TokenString     = "string"
 	TokenCRLF       = "\r\n"
+
+	stateInitial       = "initial"
+	stateReadingLength = "reading_length"
+	stateReadingString = "reading_string"
 )
 
 type Token struct {
@@ -20,14 +24,18 @@ type Token struct {
 	Value string
 }
 
+type tokenBuffer struct {
+	token Token
+	value string
+}
+
 type Lexer struct {
-	input        string
-	current      int
-	state        string
-	length       int
-	currentToken Token
-	currentValue string
-	tokens       []Token
+	input       string
+	current     int
+	state       string
+	length      int
+	tokenBuffer tokenBuffer
+	tokens      []Token
 }
 
 func (l *Lexer) ReadChar() rune {
@@ -43,24 +51,29 @@ func (l *Lexer) CreateToken(tokenType string) {
 	}
 
 	if tokenType == TokenCRLF {
-		l.currentValue = "\r\n"
+		l.tokenBuffer.value = "\r\n"
 	}
 
-	l.currentToken = Token{Type: tokenType}
+	l.tokenBuffer.token = Token{Type: tokenType}
 }
 
 func (l *Lexer) PushCurrentToken() {
-	l.currentToken.Value = l.currentValue
-	l.currentValue = ""
+	l.tokenBuffer.token.Value = l.tokenBuffer.value
+	l.tokenBuffer.value = ""
 
-	l.tokens = append(l.tokens, l.currentToken)
+	l.tokens = append(l.tokens, l.tokenBuffer.token)
 }
 
-func (l *Lexer) ReadBulkString() {
-	l.currentValue = l.input[l.current-1 : l.current+l.length-1]
-	l.current += (l.length - 1)
+func (l *Lexer) ReadBulkString() error {
+	endPos := l.current + l.length - 1
+	if endPos > len(l.input) {
+		return fmt.Errorf("bulk string length %d exceeds input length at position %d", l.length, l.current)
+	}
 
+	l.tokenBuffer.value = l.input[l.current-1 : endPos]
+	l.current = endPos
 	l.state = "initial"
+	return nil
 }
 
 func (l *Lexer) Tokenize() []Token {
@@ -79,8 +92,8 @@ func (l *Lexer) Tokenize() []Token {
 				l.CreateToken(TokenCRLF)
 				l.PushCurrentToken()
 
-				if l.state == "reading_length" {
-					l.state = "reading_string"
+				if l.state == stateReadingLength {
+					l.state = stateReadingString
 				}
 
 			} else {
@@ -88,19 +101,21 @@ func (l *Lexer) Tokenize() []Token {
 			}
 		default:
 			switch l.state {
-			case "reading_string":
+			case stateReadingString:
 				l.CreateToken(TokenString)
-				l.ReadBulkString()
-			case "reading_length":
+				if err := l.ReadBulkString(); err != nil {
+					panic(fmt.Sprintf("Error on reading bulk string with length %d", l.length))
+				}
+			case stateReadingLength:
 				val, err := strconv.Atoi(string(char))
 				if err != nil {
 					panic(fmt.Sprintf("Error on converting string to int: %v", char))
 				}
 
 				l.length = val
-				l.currentValue += string(char)
+				l.tokenBuffer.value += string(char)
 			default:
-				l.currentValue += string(char)
+				l.tokenBuffer.value += string(char)
 			}
 		}
 	}
@@ -109,5 +124,5 @@ func (l *Lexer) Tokenize() []Token {
 }
 
 func NewLexer(input string) *Lexer {
-	return &Lexer{input: input, current: 0, state: "initial"}
+	return &Lexer{input: input, current: 0, state: stateInitial}
 }
