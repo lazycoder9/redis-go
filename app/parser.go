@@ -18,11 +18,11 @@ type (
 )
 
 const (
-	parserStateInitial               = "initial"                     // Initial state. No tokens are parsed yet. We expect array token as first element
-	parserStateReadCommandLength     = "reading_command_length"      // Read command
-	parserStateReadCommand           = "reading_command"             // Read command
-	parserStateReadCommandArgsLength = "reading_command_args_length" // Read command args
-	parserStateReadCommandArgs       = "reading_command_args"        // Read command args
+	stateArrayHeader   = "array_header"   // First token (*N) indicating number of array elements
+	stateCommandLength = "command_length" // Length of command name ($N)
+	stateCommandName   = "command_name"   // Actual command name (GET, SET, etc.)
+	stateArgLength     = "arg_length"     // Length of command argument ($N)
+	stateArgValue      = "arg_value"      // Actual argument value
 )
 
 var (
@@ -31,44 +31,44 @@ var (
 )
 
 var checkers map[string]ParserStateChecker = map[string]ParserStateChecker{
-	parserStateInitial: func(p *Parser) error {
+	stateArrayHeader: func(p *Parser) error {
 		if p.tokens[p.pos].Type != TokenArray {
-			return fmt.Errorf("Invalid: no array start")
+			return fmt.Errorf("invalid: no array start")
 		}
 		return nil
 	},
-	parserStateReadCommandLength: func(p *Parser) error {
+	stateCommandLength: func(p *Parser) error {
 		if p.tokens[p.pos].Type != TokenBulkString {
-			return fmt.Errorf("Invalid: expected command string length")
+			return fmt.Errorf("invalid: expected command string length")
 		}
 
 		_, err := strconv.Atoi(p.tokens[p.pos].Value)
 		if err != nil {
-			return fmt.Errorf("Invalid: wrong command length attribute %v", p.tokens[p.pos].Value)
+			return fmt.Errorf("invalid: wrong command length attribute %v", p.tokens[p.pos].Value)
 		}
 
 		return nil
 	},
-	parserStateReadCommand: func(p *Parser) error {
+	stateCommandName: func(p *Parser) error {
 		if p.tokens[p.pos].Type != TokenString {
-			return fmt.Errorf("Invalid: expected string as command")
+			return fmt.Errorf("invalid: expected string as command")
 		}
 
 		return nil
 	},
-	parserStateReadCommandArgsLength: func(p *Parser) error {
+	stateArgLength: func(p *Parser) error {
 		if p.tokens[p.pos].Type != TokenBulkString {
-			return fmt.Errorf("Invalid: expected command arg string length")
+			return fmt.Errorf("invalid: expected command arg string length")
 		}
 
 		_, err := strconv.Atoi(p.tokens[p.pos].Value)
 		if err != nil {
-			return fmt.Errorf("Invalid: wrong command arg length attribute %v", p.tokens[p.pos].Value)
+			return fmt.Errorf("invalid: wrong command arg length attribute %v", p.tokens[p.pos].Value)
 		}
 
 		return nil
 	},
-	parserStateReadCommandArgs: func(p *Parser) error {
+	stateArgValue: func(p *Parser) error {
 		if p.tokens[p.pos].Type != TokenString {
 			return fmt.Errorf("invalid: expected string as command arg")
 		}
@@ -78,7 +78,7 @@ var checkers map[string]ParserStateChecker = map[string]ParserStateChecker{
 }
 
 var processors map[string]ParserProcessor = map[string]ParserProcessor{
-	parserStateInitial: func(p *Parser, c *Command) error {
+	stateArrayHeader: func(p *Parser, c *Command) error {
 		arrayLength, err := strconv.Atoi(p.tokens[p.pos].Value)
 		if err != nil {
 			return fmt.Errorf("invalid: wrong array length attribute %v", p.tokens[p.pos].Value)
@@ -89,12 +89,12 @@ var processors map[string]ParserProcessor = map[string]ParserProcessor{
 		p.state = stateTransitions[p.state]
 		return nil
 	},
-	parserStateReadCommandLength: func(p *Parser, c *Command) error {
+	stateCommandLength: func(p *Parser, c *Command) error {
 		p.pos++
 		p.state = stateTransitions[p.state]
 		return nil
 	},
-	parserStateReadCommand: func(p *Parser, c *Command) error {
+	stateCommandName: func(p *Parser, c *Command) error {
 		command := p.tokens[p.pos].Value
 
 		if !slices.Contains(validCommands, command) {
@@ -107,12 +107,12 @@ var processors map[string]ParserProcessor = map[string]ParserProcessor{
 		p.actualLength++
 		return nil
 	},
-	parserStateReadCommandArgsLength: func(p *Parser, c *Command) error {
+	stateArgLength: func(p *Parser, c *Command) error {
 		p.pos++
 		p.state = stateTransitions[p.state]
 		return nil
 	},
-	parserStateReadCommandArgs: func(p *Parser, c *Command) error {
+	stateArgValue: func(p *Parser, c *Command) error {
 		c.Args = append(c.Args, p.tokens[p.pos].Value)
 		p.pos++
 		p.state = stateTransitions[p.state]
@@ -122,11 +122,11 @@ var processors map[string]ParserProcessor = map[string]ParserProcessor{
 }
 
 var stateTransitions map[string]string = map[string]string{
-	parserStateInitial:               parserStateReadCommandLength,
-	parserStateReadCommandLength:     parserStateReadCommand,
-	parserStateReadCommand:           parserStateReadCommandArgsLength,
-	parserStateReadCommandArgsLength: parserStateReadCommandArgs,
-	parserStateReadCommandArgs:       parserStateReadCommandArgsLength,
+	stateArrayHeader:   stateCommandLength,
+	stateCommandLength: stateCommandName,
+	stateCommandName:   stateArgLength,
+	stateArgLength:     stateArgValue,
+	stateArgValue:      stateArgLength,
 }
 
 type Parser struct {
@@ -166,5 +166,5 @@ func (p *Parser) Parse() (*Command, error) {
 }
 
 func NewParser(tokens []Token) *Parser {
-	return &Parser{tokens: tokens, pos: 0, state: parserStateInitial}
+	return &Parser{tokens: tokens, pos: 0, state: stateArrayHeader}
 }
