@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -16,7 +15,7 @@ var (
 	configDir        string
 )
 
-var commands map[string]func(r *Request) = map[string]func(r *Request){
+var commands map[string]CommandHandler = map[string]CommandHandler{
 	"ECHO":   handleEchoCommand,
 	"PING":   handlePingCommand,
 	"SET":    handleSetCommand,
@@ -24,81 +23,70 @@ var commands map[string]func(r *Request) = map[string]func(r *Request){
 	"CONFIG": handleConfigCommand,
 }
 
-func handleEchoCommand(r *Request) {
-	parts := Chunk(r.Fields[1:], 2)
-	r.Conn.Write([]byte(strings.Join(parts[1], "\r\n") + "\r\n"))
+type CommandHandler func(c *Command) string
+
+func handleEchoCommand(c *Command) string {
+	return c.Args[0]
 }
 
-func handleUnknownError(r *Request) {
-	r.Conn.Write([]byte("-ERR unknown command\r\n"))
+func handleUnknownError(c *Command) string {
+	return "-ERR nunknown command"
 }
 
-func handlePingCommand(r *Request) {
-	r.Conn.Write([]byte("+PONG\r\n"))
+func handlePingCommand(c *Command) string {
+	return "PONG"
 }
 
-func handleConfigCommand(r *Request) {
-	parts := Chunk(r.Fields[1:], 2)
+func handleConfigCommand(c *Command) string {
+	fmt.Printf("Handle config command: %+v\n", c)
 
-	if strings.ToUpper(parts[1][1]) != "GET" {
-		r.Conn.Write([]byte("-ERR unknown command\r\n"))
-		return
-	}
-
-	switch strings.ToLower(parts[2][1]) {
-	case "dir":
-		r.Conn.Write([]byte(fmt.Sprintf("*2\r\n$3\r\ndir\r\n$%d\r\n%s\r\n", len(configDir), configDir)))
-	case "dbfilename":
-		r.Conn.Write([]byte(fmt.Sprintf("*2\r\n$10\r\ndbfilename\r\n$%d\r\n%s\r\n", len(configDBFileName), configDBFileName)))
-	default:
-		r.Conn.Write([]byte("-ERR unknown command\r\n"))
-	}
+	return ""
 }
 
-func handleSetCommand(r *Request) {
-	parts := Chunk(r.Fields[1:], 2)
-	key := parts[1][1]
-	value := parts[2]
-	options := parts[3:]
+func handleSetCommand(c *Command) string {
+	key := c.Args[0]
+	value := c.Args[1]
+	// _options := c.Args[2:]
+
 	record := Record{value: value}
 
-	for i := 0; i < len(options); i += 2 {
-		optionName := strings.ToUpper(options[i][1])
-		optionValue := options[i+1][1]
+	// for i := 0; i < len(options); i += 2 {
+	// 	optionName := strings.ToUpper(options[i][1])
+	// 	optionValue := options[i+1][1]
+	//
+	// 	if optionName == "PX" {
+	// 		ms, err := strconv.ParseInt(optionValue, 10, 64)
+	// 		if err != nil {
+	// 			r.Conn.Write([]byte("-ERR cannot parse PX value"))
+	// 		}
+	//
+	// 		duration := time.Duration(ms) * time.Millisecond
+	// 		record.expiration = time.Now().Add(duration)
+	// 	}
+	//
+	// }
 
-		if optionName == "PX" {
-			ms, err := strconv.ParseInt(optionValue, 10, 64)
-			if err != nil {
-				r.Conn.Write([]byte("-ERR cannot parse PX value"))
-			}
-
-			duration := time.Duration(ms) * time.Millisecond
-			record.expiration = time.Now().Add(duration)
-		}
-
-	}
 	storage[key] = record
-	r.Conn.Write([]byte("+OK\r\n"))
+
+	return "+OK"
 }
 
-func handleGetCommand(r *Request) {
-	parts := Chunk(r.Fields[1:], 2)
-	key := parts[1][1]
+func handleGetCommand(c *Command) string {
+	key := c.Args[0]
 	record, recordExist := storage[key]
 
 	if !recordExist {
-		r.Conn.Write([]byte("$-1\r\n"))
-		return
+		return "$-1"
 	}
 
-	if !record.expiration.IsZero() && time.Now().After(record.expiration) {
-		delete(storage, key)
-		r.Conn.Write([]byte("$-1\r\n"))
-		return
-	}
+	// if !record.expiration.IsZero() && time.Now().After(record.expiration) {
+	// 	delete(storage, key)
+	// 	r.Conn.Write([]byte("$-1\r\n"))
+	// 	return
+	// }
 
 	v := record.value.([]string)
-	r.Conn.Write([]byte(strings.Join(v, "\r\n") + "\r\n"))
+	return strings.Join(v, "\r\n")
 }
 
 type Record struct {
@@ -112,10 +100,9 @@ type Response struct {
 }
 
 type Request struct {
-	Type   string
-	Raw    []byte
-	Conn   net.Conn
-	Fields []string
+	Raw     []byte
+	Conn    net.Conn
+	Command *Command
 }
 
 func (r *Response) buildResponseMessage() string {
@@ -131,22 +118,6 @@ func (r *Response) getPrefix() string {
 	}
 }
 
-func (r *Request) parseType() {
-	var requestType string
-	switch string(r.Raw[0]) {
-	case "$":
-		requestType = "bulk"
-	case "+":
-		requestType = "string"
-	case "*":
-		requestType = "array"
-	default:
-		requestType = ""
-	}
-
-	r.Type = requestType
-}
-
 func (r *Request) handleStringRequest() {
 	switch {
 	case strings.HasPrefix(string(r.Raw[1:]), "PING"):
@@ -156,32 +127,30 @@ func (r *Request) handleStringRequest() {
 	}
 }
 
-func (r *Request) handleArrayRequest() {
-	parts := Chunk(r.Fields[1:], 2)
-	command := strings.ToUpper(parts[0][1])
+func makeRequest(conn net.Conn, rawData []byte, command *Command) Request {
+	req := Request{Conn: conn, Raw: rawData, Command: command}
 
-	if handler, ok := commands[command]; ok {
-		handler(r)
-	} else {
-		handleUnknownError(r)
-	}
-}
-
-func makeRequest(conn net.Conn, rawData []byte) Request {
-	fields := strings.Fields(string(rawData))
-	req := Request{Conn: conn, Raw: rawData, Fields: fields}
 	return req
 }
 
-func handleRequest(r Request) {
-	switch r.Type {
-	case "string":
-		r.handleStringRequest()
-	case "array":
-		r.handleArrayRequest()
-	default:
-		r.Conn.Write([]byte("-ERR unknown command\r\n"))
+func handleCommand(command *Command) string {
+	if commandHandler, exist := commands[command.Name]; exist {
+		return commandHandler(command)
 	}
+
+	return "-ERR unknown command"
+}
+
+func handleRequest(r *Request) {
+	if r.Command == nil {
+		r.Conn.Write([]byte("-ERR unknown command\r\n"))
+		return
+	}
+
+	response := handleCommand(r.Command)
+	fmt.Println("response: ", response)
+
+	r.Conn.Write([]byte("-ERR unknown command\r\n"))
 }
 
 func handleConnection(conn net.Conn) {
@@ -196,9 +165,21 @@ func handleConnection(conn net.Conn) {
 			return
 		}
 		data := buf[:n]
-		request := makeRequest(conn, data)
-		request.parseType()
-		handleRequest(request)
+
+		lexer := NewLexer(string(data))
+		tokens, err := lexer.Tokenize()
+		if err != nil {
+			fmt.Errorf("-ERR on lexer: %s", err)
+		}
+
+		parser := NewParser(tokens)
+		cmd, err := parser.Parse()
+		if err != nil {
+			fmt.Errorf("-ERR on parser: %s", err)
+		}
+
+		request := makeRequest(conn, data, cmd)
+		handleRequest(&request)
 	}
 }
 
